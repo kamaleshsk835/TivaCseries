@@ -1,0 +1,117 @@
+#include <stdint.h>       // <- Add this first
+#include <stdbool.h>
+#include <stdio.h>
+
+#include "inc/hw_memmap.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/gpio.h"
+#include "driverlib/uart.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/systick.h"
+
+
+// Ultrasonic Sensor Pins (TRIG = PA2, ECHO = PA3)
+#define TRIG_PORT  GPIO_PORTA_BASE
+#define ECHO_PORT  GPIO_PORTA_BASE
+#define TRIG_PIN   GPIO_PIN_2
+#define ECHO_PIN   GPIO_PIN_3
+
+// LED Pins (on Port F)
+#define GREEN_LED  GPIO_PIN_3   // PF3
+#define BLUE_LED   GPIO_PIN_2   // PF2
+#define RED_LED    GPIO_PIN_1   // PF1
+#define LED_PORT   GPIO_PORTF_BASE
+
+void delayMicroseconds(uint32_t us) {
+    SysCtlDelay((SysCtlClockGet() / 3 / 1000000) * us);
+}
+
+void UARTSendString(const char *str) {
+    while (*str) {
+        UARTCharPut(UART0_BASE, *str++);
+    }
+}
+
+int main(void) {
+    uint32_t startTick, endTick, tickDiff;
+    float duration_us, distance_cm;
+    char buffer[64];
+
+    // Set system clock to 50 MHz
+    SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL |
+                   SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
+    // Enable peripherals
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);  // Ultrasonic
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);  // LEDs
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);  // UART
+
+    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA)) {}
+    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF)) {}
+    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_UART0)) {}
+
+    // UART configuration: PA0 = RX, PA1 = TX
+    GPIOPinConfigure(GPIO_PA0_U0RX);
+    GPIOPinConfigure(GPIO_PA1_U0TX);
+    GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    UARTConfigSetExpClk(UART0_BASE, SysCtlClockGet(), 115200,
+                        UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE);
+
+    // TRIG as output, ECHO as input
+    GPIOPinTypeGPIOOutput(TRIG_PORT, TRIG_PIN);
+    GPIOPinWrite(TRIG_PORT, TRIG_PIN, 0);
+    GPIOPinTypeGPIOInput(ECHO_PORT, ECHO_PIN);
+
+    // LED pins as output
+    GPIOPinTypeGPIOOutput(LED_PORT, RED_LED | BLUE_LED | GREEN_LED);
+    GPIOPinWrite(LED_PORT, RED_LED | BLUE_LED | GREEN_LED, 0); // All LEDs off
+
+    // Configure SysTick timer
+    SysTickPeriodSet(0xFFFFFF);
+    SysTickEnable();
+
+    while (1) {
+        // Send 10us pulse to TRIG
+        GPIOPinWrite(TRIG_PORT, TRIG_PIN, TRIG_PIN);
+        delayMicroseconds(10);
+        GPIOPinWrite(TRIG_PORT, TRIG_PIN, 0);
+
+        // Wait for ECHO high
+        while (GPIOPinRead(ECHO_PORT, ECHO_PIN) == 0);
+        startTick = SysTickValueGet();
+
+        // Wait for ECHO low
+        while (GPIOPinRead(ECHO_PORT, ECHO_PIN) != 0);
+        endTick = SysTickValueGet();
+
+        // Calculate ticks
+        if (startTick >= endTick)
+            tickDiff = startTick - endTick;
+        else
+            tickDiff = (0xFFFFFF - endTick + startTick);
+
+        // Convert ticks to microseconds (50 MHz clock ? 20 ns per tick)
+        duration_us = tickDiff * 20.0 / 1000.0;
+
+        // Calculate distance
+        distance_cm = duration_us / 58.0;
+
+        // Send distance to UART
+        snprintf(buffer, sizeof(buffer), "Distance: %.2f cm\r\n", distance_cm);
+        UARTSendString(buffer);
+
+        // LED Logic
+        if (distance_cm >= 2.0 && distance_cm <= 10.0) {
+            GPIOPinWrite(LED_PORT, RED_LED | BLUE_LED | GREEN_LED, GREEN_LED);  // Green ON
+        } else if (distance_cm > 10.0 && distance_cm <= 30.0) {
+            GPIOPinWrite(LED_PORT, RED_LED | BLUE_LED | GREEN_LED, BLUE_LED);   // Blue ON
+        } else if (distance_cm > 30.0) {
+            GPIOPinWrite(LED_PORT, RED_LED | BLUE_LED | GREEN_LED, RED_LED);    // Red ON
+        } else {
+            GPIOPinWrite(LED_PORT, RED_LED | BLUE_LED | GREEN_LED, 0);          // All OFF
+        }
+
+        // Delay ~500ms
+        SysCtlDelay(SysCtlClockGet() / 6);
+    }
+}
