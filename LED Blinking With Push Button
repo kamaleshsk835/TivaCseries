@@ -1,0 +1,40 @@
+#include <stdint.h>
+#include <stdbool.h>
+#include "inc/hw_memmap.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/gpio.h"
+
+int main(void)
+{
+    // Set system clock to 50 MHz
+    SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL |
+                   SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
+    // Enable GPIO ports
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+
+    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOF)) {}
+    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA)) {}
+
+    // Configure PF1 as output for LED
+    GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, GPIO_PIN_1);
+
+    // Configure PA3 as input with pull-up for button
+    GPIOPinTypeGPIOInput(GPIO_PORTA_BASE, GPIO_PIN_3);
+    GPIOPadConfigSet(GPIO_PORTA_BASE, GPIO_PIN_3,
+                     GPIO_STRENGTH_2MA, GPIO_PIN_TYPE_STD_WPU);
+
+    while (1)
+    {
+        // Button pressed (PA3 LOW)
+        if (GPIOPinRead(GPIO_PORTA_BASE, GPIO_PIN_3) == 0)
+        {
+            GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, GPIO_PIN_1);  // LED ON
+        }
+        else
+        {
+            GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_1, 0x00);        // LED OFF
+        }
+    }
+}
