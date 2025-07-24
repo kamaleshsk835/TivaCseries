@@ -1,0 +1,61 @@
+#include <stdint.h>
+#include "tm4c123gh6pm.h"
+
+void UART0_Init(void);
+char UART0_ReadChar(void);
+void UART0_WriteChar(char data);
+void UART0_WriteString(char *str);
+
+int main(void)
+{
+    UART0_Init();
+
+    UART0_WriteString("Bluetooth Ready\r\n");
+
+    while (1)
+    {
+        char c = UART0_ReadChar();  // Read from Bluetooth
+        UART0_WriteChar(c);         // Echo back
+    }
+}
+
+void UART0_Init(void)
+{
+    SYSCTL->RCGCUART |= 1;      // Enable UART0 clock
+    SYSCTL->RCGCGPIO |= 1;      // Enable PORTA clock
+
+    // Wait for ready
+    while ((SYSCTL->PRGPIO & 0x01) == 0) {}
+
+    // UART0: PA0 = RX, PA1 = TX
+    GPIOA->AFSEL |= 0x03;       // Enable alternate function
+    GPIOA->PCTL  |= 0x11;       // Configure PA0,PA1 as UART
+    GPIOA->DEN   |= 0x03;       // Digital enable
+    GPIOA->AMSEL &= ~0x03;      // Disable analog
+
+    UART0->CTL &= ~0x01;        // Disable UART for config
+    UART0->IBRD = 104;          // 16MHz/16/9600 = 104.16
+    UART0->FBRD = 11;           // Fraction = 0.16 * 64 + 0.5 = 11
+    UART0->LCRH = 0x60;         // 8-bit, no parity, 1-stop
+    UART0->CTL  = 0x301;        // Enable UART, TXE, RXE
+}
+
+char UART0_ReadChar(void)
+{
+    while ((UART0->FR & 0x10) != 0);  // Wait until RXFE is 0
+    return UART0->DR & 0xFF;
+}
+
+void UART0_WriteChar(char data)
+{
+    while ((UART0->FR & 0x20) != 0);  // Wait until TXFF is 0
+    UART0->DR = data;
+}
+
+void UART0_WriteString(char *str)
+{
+    while (*str)
+    {
+        UART0_WriteChar(*str++);
+    }
+}
