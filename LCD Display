@@ -1,0 +1,103 @@
+#include <stdint.h>
+#include <stdbool.h>
+#include "inc/hw_memmap.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/gpio.h"
+
+#define RS GPIO_PIN_0  // PB0
+#define EN GPIO_PIN_1  // PB1
+#define D4 GPIO_PIN_2  // PB2
+#define D5 GPIO_PIN_3  // PB3
+#define D6 GPIO_PIN_4  // PB4
+#define D7 GPIO_PIN_5  // PB5
+
+void delayMs(uint32_t ms) {
+    SysCtlDelay((SysCtlClockGet() / (3 * 1000)) * ms);
+}
+
+void lcdPulseEnable() {
+    GPIOPinWrite(GPIO_PORTB_BASE, EN, EN);
+    delayMs(1);
+    GPIOPinWrite(GPIO_PORTB_BASE, EN, 0x00);
+}
+
+void lcdSendNibble(uint8_t nibble) {
+    uint8_t data = 0;
+    if (nibble & 0x10) data |= D4;
+    if (nibble & 0x20) data |= D5;
+    if (nibble & 0x40) data |= D6;
+    if (nibble & 0x80) data |= D7;
+    GPIOPinWrite(GPIO_PORTB_BASE, D4 | D5 | D6 | D7, data);
+    lcdPulseEnable();
+}
+
+void lcdCommand(uint8_t cmd) {
+    GPIOPinWrite(GPIO_PORTB_BASE, RS, 0x00);  // RS = 0 for command
+    lcdSendNibble(cmd & 0xF0);
+    lcdSendNibble((cmd << 4) & 0xF0);
+    delayMs(2);
+}
+
+void lcdData(uint8_t data) {
+    GPIOPinWrite(GPIO_PORTB_BASE, RS, RS);  // RS = 1 for data
+    lcdSendNibble(data & 0xF0);
+    lcdSendNibble((data << 4) & 0xF0);
+    delayMs(2);
+}
+
+void lcdInit() {
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+    while (!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOB));
+
+    GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, RS | EN | D4 | D5 | D6 | D7);
+    
+    delayMs(20);
+
+    lcdCommand(0x33);
+    lcdCommand(0x32);
+    lcdCommand(0x28);  // 4-bit, 2-line
+    lcdCommand(0x0C);  // Display ON, cursor OFF
+    lcdCommand(0x06);  // Increment cursor
+    lcdCommand(0x01);  // Clear display
+    delayMs(2);
+}
+
+void lcdClear() {
+    lcdCommand(0x01);
+    delayMs(2);
+}
+
+void lcdSetCursor(uint8_t row, uint8_t col) {
+    uint8_t address = (row == 0) ? 0x80 + col : 0xC0 + col;
+    lcdCommand(address);
+}
+
+void lcdPrint(const char *str) {
+    while (*str) {
+        lcdData(*str++);
+    }
+}
+
+int main(void) {
+    SysCtlClockSet(SYSCTL_SYSDIV_5 | SYSCTL_USE_PLL |
+                   SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
+    lcdInit();
+
+    char *message = " Knowledge institute of technology,Salem ";
+    int len = 34;  // length of the message string
+    int pos;
+	
+	      lcdCommand(0xC0);  // Move to 2nd line
+					lcdPrint("EEE DEPARTMENT");
+    while (1) {
+			
+        for (pos = 0; pos <= len - 16; pos++) {
+            lcdSetCursor(0, 0);
+            for (int i = 0; i < 16; i++) {
+                lcdData(message[pos + i]);
+            }
+            delayMs(900);
+        }
+    }
+}
