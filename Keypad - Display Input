@@ -1,0 +1,90 @@
+#include <stdint.h>
+#include <stdbool.h>
+#include "inc/hw_memmap.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/gpio.h"
+#include "driverlib/uart.h"
+#include "driverlib/pin_map.h"
+
+char keys[4][4] = {
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+
+// UART0 Initialization (PA0 RX, PA1 TX)
+void UART0_Init(void) {
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+
+    GPIOPinConfigure(GPIO_PA0_U0RX);
+    GPIOPinConfigure(GPIO_PA1_U0TX);
+    GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+
+    UARTConfigSetExpClk(UART0_BASE, SysCtlClockGet(), 9600,
+        UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE);
+}
+
+// Send character over UART0
+void UART0_SendChar(char c) {
+    UARTCharPut(UART0_BASE, c);
+}
+
+// Keypad Initialization using PORT B
+void Keypad_Init(void) {
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+    
+    // Rows: PB4–PB7 (Output)
+    GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7);
+    GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7, 
+                 GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7);
+
+    // Columns: PB0–PB3 (Input with Pull-Up)
+    GPIOPinTypeGPIOInput(GPIO_PORTB_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3);
+    GPIOPadConfigSet(GPIO_PORTB_BASE, GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3,
+                     GPIO_STRENGTH_2MA, GPIO_PIN_TYPE_STD_WPU);
+}
+
+// Keypad Scanning
+char Keypad_GetKey(void) {
+    for (int row = 0; row < 4; row++) {
+        // Set all rows HIGH
+        GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7,
+                     GPIO_PIN_4 | GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7);
+
+        // Set current row LOW
+        GPIOPinWrite(GPIO_PORTB_BASE, (1 << (row + 4)), 0);
+
+        SysCtlDelay(10000); // small delay for debounce
+
+        uint8_t cols = GPIOPinRead(GPIO_PORTB_BASE, 0x0F); // PB0–PB3
+
+        for (int col = 0; col < 4; col++) {
+            if (!(cols & (1 << col))) {
+                // Wait for release (debounce)
+                while (!(GPIOPinRead(GPIO_PORTB_BASE, (1 << col))));
+                return keys[row][col];
+            }
+        }
+    }
+    return 0;
+}
+
+int main(void) {
+    // System clock 40 MHz
+    SysCtlClockSet(SYSCTL_SYSDIV_5 | SYSCTL_USE_PLL | SYSCTL_OSC_MAIN |
+                   SYSCTL_XTAL_16MHZ);
+
+    UART0_Init();
+    Keypad_Init();
+
+    while (1) {
+        char key = Keypad_GetKey();
+        if (key) {
+            UART0_SendChar(key);
+            UART0_SendChar('\n');  // for newline in PuTTY
+            SysCtlDelay(SysCtlClockGet() / 10); // Delay between keys
+        }
+    }
+}
