@@ -1,0 +1,94 @@
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include "inc/hw_memmap.h"
+#include "driverlib/sysctl.h"
+#include "driverlib/gpio.h"
+#include "driverlib/uart.h"
+#include "driverlib/pin_map.h"
+#include "driverlib/systick.h"
+
+#define TRIG_PIN  GPIO_PIN_2   // PA2
+#define ECHO_PIN  GPIO_PIN_3   // PA3
+#define TRIG_PORT GPIO_PORTA_BASE
+#define ECHO_PORT GPIO_PORTA_BASE
+
+// Delay in microseconds using SysCtlDelay
+void delayMicroseconds(uint32_t us) {
+    SysCtlDelay((SysCtlClockGet() / 3 / 1000000) * us);
+}
+
+// Send string over UART0
+void UARTSendString(const char *str) {
+    while (*str) {
+        UARTCharPut(UART0_BASE, *str++);
+    }
+}
+
+int main(void) {
+    uint32_t startTick, endTick, tickDiff;
+    float duration_us, distance_cm;
+    char buffer[64];
+
+    // Set system clock to 50 MHz
+    SysCtlClockSet(SYSCTL_SYSDIV_4 | SYSCTL_USE_PLL |
+                   SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
+    // Enable peripherals
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_GPIOA)) {}
+    while(!SysCtlPeripheralReady(SYSCTL_PERIPH_UART0)) {}
+
+    // UART0: PA0 = RX, PA1 = TX
+    GPIOPinConfigure(GPIO_PA0_U0RX);
+    GPIOPinConfigure(GPIO_PA1_U0TX);
+    GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    UARTConfigSetExpClk(UART0_BASE, SysCtlClockGet(), 115200,
+                        UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE | UART_CONFIG_PAR_NONE);
+
+    // TRIG = output, ECHO = input
+    GPIOPinTypeGPIOOutput(TRIG_PORT, TRIG_PIN);
+    GPIOPinTypeGPIOInput(ECHO_PORT, ECHO_PIN);
+    GPIOPinWrite(TRIG_PORT, TRIG_PIN, 0); // Set TRIG low initially
+
+    // Setup SysTick
+    SysTickPeriodSet(0xFFFFFF);
+    SysTickEnable();
+
+    while (1) {
+        // Send 10us trigger pulse
+        GPIOPinWrite(TRIG_PORT, TRIG_PIN, TRIG_PIN);
+        delayMicroseconds(10);
+        GPIOPinWrite(TRIG_PORT, TRIG_PIN, 0);
+
+        // Wait for ECHO to go HIGH
+        while (GPIOPinRead(ECHO_PORT, ECHO_PIN) == 0);
+
+        startTick = SysTickValueGet();
+
+        // Wait for ECHO to go LOW
+        while (GPIOPinRead(ECHO_PORT, ECHO_PIN) != 0);
+
+        endTick = SysTickValueGet();
+
+        // Calculate time difference (in ticks)
+        if (startTick >= endTick)
+            tickDiff = startTick - endTick;
+        else
+            tickDiff = (0xFFFFFF - endTick + startTick);
+
+        // Convert ticks to microseconds (1 tick = 20ns @50MHz)
+        duration_us = tickDiff * 20.0 / 1000.0;
+
+        // Calculate distance in cm
+        distance_cm = duration_us / 58.0;
+
+        // Send to UART
+        snprintf(buffer, sizeof(buffer), "Distance: %.2f cm\r\n", distance_cm);
+        UARTSendString(buffer);
+
+        // Wait 2 seconds
+        SysCtlDelay(SysCtlClockGet() / 3);
+    }
+}
